@@ -1,0 +1,27 @@
+{
+  "api_token": {
+    "description": "呜哇小站 API Token",
+    "type": "string",
+    "default": "",
+    "hint": "在 https://emoji.wuwa.games/api 获取。留空使用匿名额度；请勿公开分享此配置。"
+  },
+  "page_size": {
+    "description": "每页搜索图片数量",
+    "type": "int",
+    "default": 4,
+    "hint": "范围 1–8，每次搜索展示该数量的图片，避免消息过长。"
+  },
+  "image_format": {
+    "description": "图片格式",
+    "type": "string",
+    "default": "webp",
+    "options": ["original", "webp"],
+    "hint": "推荐 webp，支持服务提供的动态 WebP；original 使用原始格式（部分原图 CDN 可能返回 567）。动画展示取决于消息平台。"
+  },
+  "timeout": {
+    "description": "API 请求超时（秒）",
+    "type": "int",
+    "default": 20,
+    "hint": "范围 3–60。支持运行环境的 HTTP_PROXY/HTTPS_PROXY。"
+  }
+}

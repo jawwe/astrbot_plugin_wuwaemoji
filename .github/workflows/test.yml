@@ -1,0 +1,32 @@
+name: Plugin checks
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          repository: AstrBotDevs/AstrBot
+          ref: master
+          path: astrbot
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@e58605a9b6da7c637471fab8847a5e5a6b8df081 # v5
+      - run: uv sync --project astrbot
+      - run: uv run --project astrbot ruff format --check main.py tests scripts
+      - run: uv run --project astrbot ruff check main.py tests scripts
+      - run: uv run --project astrbot python -m pytest -q tests
+      - run: uv run --project astrbot python scripts/package_plugin.py
+      - run: uv run --project astrbot python scripts/validate_plugin_layout.py
+      - run: uv run --project astrbot python scripts/astrbot_smoke.py --astrbot-root astrbot
