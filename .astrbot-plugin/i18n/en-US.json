@@ -1,0 +1,8 @@
+{
+  "views": {
+    "admin": {
+      "title": "Emoji library",
+      "description": "Browse, categorize and cache Wuthering Waves emoji images."
+    }
+  }
+}

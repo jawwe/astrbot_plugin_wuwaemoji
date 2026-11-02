@@ -9,6 +9,7 @@ import os
 import sys
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 
@@ -25,6 +26,7 @@ async def run(root: Path, live: bool):
     from astrbot.core.star.filter.command import CommandFilter
     from astrbot.core.star.star_handler import star_handlers_registry
     from astrbot.core.star.star_manager import PluginManager
+    from astrbot.dashboard.services.plugin_page_service import PluginPageService
     from PIL import Image as PILImage
 
     plugin_file = Path(__file__).resolve().parents[1] / "main.py"
@@ -46,8 +48,10 @@ async def run(root: Path, live: bool):
                 encoding="utf-8"
             )
         )
+    registered = []
+    context = SimpleNamespace(register_web_api=lambda *args: registered.append(args))
     plugin = module.WuwaEmojiPlugin(
-        None, config | {"cache_enabled": True, "enable_llm_tools": True}
+        context, config | {"cache_enabled": True, "enable_llm_tools": True}
     )
     temporary = tempfile.TemporaryDirectory(prefix="wuwaemoji-smoke-")
     plugin.cache = module.EmojiCache(Path(temporary.name))
@@ -60,6 +64,21 @@ async def run(root: Path, live: bool):
     )
     event.is_at_or_wake_command = True
     try:
+        assert len(registered) == 9
+        assert all(
+            route[0].startswith("/astrbot_plugin_wuwaemoji/admin/")
+            for route in registered
+        )
+        metadata.root_dir_name = plugin_file.parent.name
+        page_service = PluginPageService(
+            SimpleNamespace(plugin_store_path=str(plugin_file.parent.parent))
+        )
+        views = await page_service.discover_plugin_pages(metadata)
+        assert [view.name for view in views] == ["admin"]
+        assert metadata.i18n["zh-CN"]["views"]["admin"]["title"] == "表情图库"
+        print(
+            "Actual AstrBot view discovery, localized title and nine registered admin APIs: OK"
+        )
         commands = {}
         for handler in star_handlers_registry.get_handlers_by_module_name(spec.name):
             for command_filter in handler.event_filters:

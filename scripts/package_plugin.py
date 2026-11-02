@@ -15,6 +15,7 @@ output = (
 files = (
     "main.py",
     "emoji_cache.py",
+    "admin_page.py",
     "metadata.yaml",
     "_conf_schema.json",
     "requirements.txt",
@@ -22,6 +23,11 @@ files = (
     "CHANGELOG.md",
     "LICENSE",
     "logo.png",
+    "views/admin/index.html",
+    "views/admin/app.js",
+    "views/admin/style.css",
+    ".astrbot-plugin/i18n/zh-CN.json",
+    ".astrbot-plugin/i18n/en-US.json",
 )
 with ZipFile(output, "w", compression=ZIP_DEFLATED) as archive:
     for name in files:

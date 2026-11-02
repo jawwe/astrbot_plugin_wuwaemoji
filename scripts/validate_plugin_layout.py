@@ -13,6 +13,7 @@ root = Path(__file__).resolve().parents[1]
 required = {
     "main.py",
     "emoji_cache.py",
+    "admin_page.py",
     "metadata.yaml",
     "_conf_schema.json",
     "requirements.txt",
@@ -20,6 +21,11 @@ required = {
     "CHANGELOG.md",
     "LICENSE",
     "logo.png",
+    "views/admin/index.html",
+    "views/admin/app.js",
+    "views/admin/style.css",
+    ".astrbot-plugin/i18n/zh-CN.json",
+    ".astrbot-plugin/i18n/en-US.json",
 }
 for name in required:
     assert (root / name).is_file(), f"Missing {name}"
@@ -43,6 +49,13 @@ assert "/" not in metadata["author"]
 SpecifierSet(metadata["astrbot_version"])
 schema = json.loads((root / "_conf_schema.json").read_text(encoding="utf-8"))
 assert schema["api_token"]["default"] == ""
+for locale in ("zh-CN", "en-US"):
+    translations = json.loads(
+        (root / f".astrbot-plugin/i18n/{locale}.json").read_text(encoding="utf-8")
+    )
+    assert translations["views"]["admin"]["title"]
+html = (root / "views/admin/index.html").read_text(encoding="utf-8")
+assert "./app.js" in html and "./style.css" in html and 'type="module"' in html
 with Image.open(root / "logo.png") as image:
     assert image.format == "PNG" and image.size == (256, 256)
 version = str(metadata["version"])

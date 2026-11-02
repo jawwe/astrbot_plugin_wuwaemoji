@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>鸣潮表情图库</title>
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <main class="app">
+    <header class="masthead">
+      <div class="brand"><span class="brand-icon" aria-hidden="true">≈</span><div><p class="eyebrow">WUWA · EMOJI LIBRARY</p><h1>鸣潮表情图库</h1><p class="subtitle">收藏喜欢的表情，让每一次回复更贴切。</p></div></div>
+      <button id="refresh" class="secondary" type="button">刷新图库</button>
+    </header>
+    <div id="notice" class="notice" role="status" aria-live="polite">正在连接 AstrBot…</div>
+    <section class="stats" aria-label="图库概况">
+      <div class="stat"><span>本地表情</span><strong id="stat-count">—</strong><small id="stat-limit">正在读取</small></div>
+      <div class="stat"><span>已用容量</span><strong id="stat-size">—</strong><small id="stat-capacity">—</small></div>
+      <div class="stat"><span>用途分类</span><strong id="stat-categories">—</strong><button type="button" id="open-category" class="text-button">＋ 新建分类</button></div>
+    </section>
+    <section id="job-panel" class="job-panel" hidden aria-labelledby="job-heading"><div class="job-heading"><div><p class="eyebrow">CACHE TASK</p><h2 id="job-heading" tabindex="-1">缓存任务</h2></div><button id="cancel-job" type="button" class="secondary">取消任务</button></div><progress id="job-progress" max="100" value="0" aria-label="缓存进度"></progress><div class="job-summary"><strong id="job-state">准备中</strong><span id="job-counts"></span></div><ul id="job-errors"></ul><p class="hint">取消将在当前图片处理完毕后生效，已经成功缓存的图片会保留。刷新页面后仍可查看最近的任务。</p></section>
+    <section class="workspace">
+      <div class="workspace-head"><div class="tabs" role="tablist" aria-label="浏览来源"><button type="button" id="tab-local" role="tab" aria-controls="local-panel" aria-selected="true" data-tab="local">本地图库</button><button type="button" id="tab-remote" role="tab" aria-controls="remote-panel" aria-selected="false" tabindex="-1" data-tab="remote">小站搜索</button></div><span class="source-note" id="source-note">人物与用途，可以一起筛选</span></div>
+      <div id="local-panel" role="tabpanel" aria-labelledby="tab-local">
+        <form id="local-form" class="filters"><label class="grow">搜索图库<input name="query" type="search" placeholder="分类说明、图片描述或包标题" maxlength="200"></label><label>人物<input name="character" list="characters" placeholder="全部人物" maxlength="80"></label><label>用途<select name="category" id="local-category"><option value="">全部用途</option></select></label><button type="submit" class="primary">筛选</button></form>
+      </div>
+      <div id="remote-panel" role="tabpanel" aria-labelledby="tab-remote" hidden>
+        <form id="remote-form" class="filters"><label>人物<input name="character" list="characters" placeholder="例如：爱弥斯" maxlength="200"></label><label>画师<input name="artist" placeholder="例如：雾雪" maxlength="200"></label><label class="grow">关键词<input name="q" type="search" placeholder="表情包标题或资源 ID" maxlength="200"></label><button type="submit" class="primary">搜索小站</button><details class="advanced"><summary>指定表情包</summary><label>表情包 ID 或完整标题<input name="pack" placeholder="可选" maxlength="200"></label></details></form>
+        <p class="hint">小站搜索不会自动缓存。预览为静态缩略图，缓存时保留原始动画；情感用途由你在本地整理。</p>
+        <details class="batch-panel"><summary>按当前条件批量缓存 <span>最多 5 页 / 100 张</span></summary><form id="batch-form" class="batch-form"><label>起始页<input name="start_page" type="number" value="1" min="1" max="100000" required></label><label>连续页数<input name="pages" type="number" value="1" min="1" max="5" required></label><label>最多缓存<input name="maximum" type="number" value="20" min="1" max="100" required></label><button class="primary cache-action" type="submit">开始批量缓存</button><p class="hint">使用上方搜索条件及下方目标用途；每页数量遵循插件的批量缓存设置。</p></form></details>
+      </div>
+      <datalist id="characters"></datalist>
+      <div class="selection-bar"><div class="selection-left"><button id="select-all" class="text-button" type="button">全选本页</button><button id="clear-selection" class="text-button muted" type="button">取消选择</button><span id="selection-count">已选 0 张</span></div><div class="selection-right"><label for="target-category">目标用途</label><select id="target-category"><option value="未分类">未分类</option></select><button id="apply-selection" class="primary cache-action" type="button" disabled>批量归类</button></div></div>
+      <div id="gallery" class="gallery" aria-live="polite" aria-busy="false"></div>
+      <div id="empty" class="empty"><div class="empty-icon" aria-hidden="true">⌁</div><h2 id="empty-title">图库正在加载</h2><p id="empty-description">正在读取本地缓存与分类。</p></div>
+      <footer class="pagination"><span id="result-count">—</span><div><button id="previous" class="secondary" type="button" disabled>上一页</button><span id="page-number">第 1 页</span><button id="next" class="secondary" type="button" disabled>下一页</button></div></footer>
+    </section>
+    <footer class="app-footer">人物标签来自呜哇小站 · 情感用途由本地整理 · 图片版权归原作者所有</footer>
+  </main>
+  <dialog id="category-dialog"><form id="category-form"><div class="dialog-head"><h2>新建用途分类</h2><button class="icon-button close-dialog" type="button" aria-label="关闭">×</button></div><p class="hint">写清适用场景，AstrBot 就能根据说明选图。</p><label>分类名称<input name="name" maxlength="40" placeholder="例如：害羞" required></label><label>用途说明<textarea name="description" maxlength="300" rows="3" placeholder="适合被夸奖、害羞或轻微不好意思的场景" required></textarea></label><p class="form-error" role="alert"></p><div class="dialog-actions"><button class="secondary close-dialog" type="button">取消</button><button class="primary" type="submit">保存分类</button></div></form></dialog>
+  <dialog id="edit-dialog"><form id="edit-form"><div class="dialog-head"><h2>整理这张表情</h2><button class="icon-button close-dialog" type="button" aria-label="关闭">×</button></div><p id="edit-title" class="hint"></p><label>新增用途<select name="category" id="edit-category"></select></label><label>图片描述<textarea name="description" maxlength="300" rows="3" placeholder="例如：笑着举起大拇指，表示赞同"></textarea></label><p class="hint">保留原有人物和其他用途；留空描述时保留原描述。</p><p class="form-error" role="alert"></p><div class="dialog-actions"><button class="secondary close-dialog" type="button">取消</button><button class="primary" type="submit">保存</button></div></form></dialog>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

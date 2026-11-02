@@ -15,8 +15,10 @@ from astrbot.core.agent.message import TextPart
 from astrbot.core.provider.entities import ProviderRequest
 
 if __package__:
+    from .admin_page import AdminPage
     from .emoji_cache import CacheError, EmojiCache
 else:
+    from admin_page import AdminPage
     from emoji_cache import CacheError, EmojiCache
 
 API_BASE = "https://emoji.wuwa.games/apis/api.random-emoji.wuwa.games/v1alpha1"
@@ -190,6 +192,9 @@ class WuwaEmojiPlugin(Star):
             * 1024
             * 1024,
         )
+        self.admin = AdminPage(self)
+        if context is not None:
+            self.admin.register(context)
 
     async def request_api(self, endpoint: str, params: dict) -> dict:
         """Call the API without exposing credentials or upstream error bodies.
@@ -212,7 +217,7 @@ class WuwaEmojiPlugin(Star):
             )
         headers = {
             "Accept": "application/json",
-            "User-Agent": "astrbot_plugin_wuwaemoji/1.1.0 (AstrBot plugin)",
+            "User-Agent": "astrbot_plugin_wuwaemoji/1.2.0 (AstrBot plugin)",
         }
         token = str(self.config.get("api_token", "") or "").strip()
         if token:
@@ -290,43 +295,9 @@ class WuwaEmojiPlugin(Star):
                         if category:
                             await self.cache.classify(candidate["id"], category)
                         return candidate["path"]
-            if self.session is None or self.session.closed:
-                self.session = aiohttp.ClientSession(
-                    timeout=aiohttp.ClientTimeout(
-                        total=max(3, min(60, int(self.config.get("timeout", 20))))
-                    ),
-                    trust_env=True,
-                )
-            limit = (
-                max(1, min(30, int(self.config.get("cache_image_limit_mb", 10))))
-                * 1024
-                * 1024
-            )
-            target = url
-            for _ in range(4):
-                # Validate every redirect and never attach Authorization to media downloads.
-                image_url({"url": target})
-                async with self.session.get(
-                    target,
-                    headers={
-                        "Accept": "image/*",
-                        "User-Agent": "astrbot_plugin_wuwaemoji/1.1.0",
-                    },
-                    allow_redirects=False,
-                ) as response:
-                    if response.status in {301, 302, 303, 307, 308}:
-                        target = urljoin(target, response.headers.get("Location", ""))
-                        continue
-                    if response.status != 200:
-                        raise CacheError(f"图片下载失败（HTTP {response.status}）。")
-                    content = bytearray()
-                    async for chunk in response.content.iter_chunked(65536):
-                        content.extend(chunk)
-                        if len(content) > limit:
-                            raise CacheError("图片超过单张缓存大小限制。")
-                    record = await self.cache.put(item, bytes(content), category)
-                    return record["path"]
-            raise CacheError("图片重定向次数过多。")
+            content = await self.download_image(item)
+            record = await self.cache.put(item, content, category)
+            return record["path"]
         except (
             CacheError,
             WuwaAPIError,
@@ -342,6 +313,51 @@ class WuwaEmojiPlugin(Star):
                 "[WuwaEmoji] Optional media cache unavailable (%s)", type(exc).__name__
             )
             return url
+
+    async def download_image(self, item: dict) -> bytes:
+        """Download bounded media for caching or non-persistent admin previews.
+
+        Args:
+            item: API image record with a short-lived media URL.
+
+        Returns:
+            Image bytes downloaded without the API Authorization header.
+        """
+        target = image_url(item)
+        if self.session is None or self.session.closed:
+            self.session = aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(
+                    total=max(3, min(60, int(self.config.get("timeout", 20))))
+                ),
+                trust_env=True,
+            )
+        limit = (
+            max(1, min(30, int(self.config.get("cache_image_limit_mb", 10))))
+            * 1024
+            * 1024
+        )
+        for _ in range(4):
+            image_url({"url": target})
+            async with self.session.get(
+                target,
+                headers={
+                    "Accept": "image/*",
+                    "User-Agent": "astrbot_plugin_wuwaemoji/1.2.0",
+                },
+                allow_redirects=False,
+            ) as response:
+                if response.status in {301, 302, 303, 307, 308}:
+                    target = urljoin(target, response.headers.get("Location", ""))
+                    continue
+                if response.status != 200:
+                    raise CacheError(f"图片下载失败（HTTP {response.status}）。")
+                content = bytearray()
+                async for chunk in response.content.iter_chunked(65536):
+                    content.extend(chunk)
+                    if len(content) > limit:
+                        raise CacheError("图片超过单张缓存大小限制。")
+                return bytes(content)
+        raise CacheError("图片重定向次数过多。")
 
     async def local_candidates(
         self, query: str = "", category: str = "", character: str = "", limit: int = 6
@@ -811,6 +827,7 @@ class WuwaEmojiPlugin(Star):
 
     async def terminate(self):
         """Release the HTTP session and cached signed image URLs."""
+        await self.admin.close()
         if self.session is not None:
             await self.session.close()
         self.searches.clear()

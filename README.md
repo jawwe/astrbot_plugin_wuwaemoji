@@ -3,11 +3,11 @@
 <img src="logo.png" alt="鸣潮表情包插件 Logo" width="128" height="128">
 
 [![Plugin checks](https://github.com/jawwe/astrbot_plugin_wuwaemoji/actions/workflows/test.yml/badge.svg)](https://github.com/jawwe/astrbot_plugin_wuwaemoji/actions/workflows/test.yml)
-[![Version](https://img.shields.io/badge/version-1.1.0-blue)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.2.0-blue)](CHANGELOG.md)
 [![AstrBot](https://img.shields.io/badge/AstrBot-%3E%3D4.29.0-blue)](https://github.com/AstrBotDevs/AstrBot)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-使用 [呜哇小站 · 表情包仓鼠库](https://emoji.wuwa.games) 的 [API](https://emoji.wuwa.games/api)，搜索和随机发送鸣潮表情包，并支持人物与情感用途并行分类缓存、AstrBot 模型工具检索和直接发图。
+使用 [呜哇小站 · 表情包仓鼠库](https://emoji.wuwa.games) 的 [API](https://emoji.wuwa.games/api)，搜索和随机发送鸣潮表情包，提供可视化管理页面、人物与情感用途并行分类缓存、手动及批量缓存、AstrBot 模型工具检索和直接发图。
 
 ## 安装
 
@@ -22,6 +22,20 @@
 ## 平台与验证范围
 
 插件使用 AstrBot 标准文本、图片消息组件，不依赖专有平台接口。已在 AstrBot 4.29.0 验证命令注册、消息结果构建、真实 API 查询和图片下载，尚未连接 QQ、Telegram 等实际聊天平台验证发送，因此暂不声明 `support_platforms` 认证列表。多图数量、动态 WebP 展示及平台图片审核结果取决于对应适配器与平台能力。
+
+## 可视化管理页面
+
+更新后重载插件，在 **AstrBot WebUI → 插件 → 鸣潮表情包 → 表情图库** 打开管理视图。如果旧页面没有显示新入口，请刷新插件详情。
+
+- **本地图库**：分页查看缩略图，按人物、用途和关键词组合筛选；可单张编辑用途与图片描述，也可勾选本页多张进行批量归类。人物标签继续自动维护。
+- **小站搜索**：按人物、画师、包标题关键词、指定表情包筛选。搜索和预览不会自动入库；点击“缓存此图”可收藏单张，勾选后点击“缓存已选”可一次收藏本页最多 20 张。
+- **按条件批量缓存**：展开批量面板，设置起始页、连续页数和最多缓存张数。每个任务最多连续 5 页、100 张，每页数量遵循 `cache_batch_size` 配置；必须至少指定人物、画师、表情包或关键词之一。
+- **进度与取消**：后台任务显示成功数、失败数、处理上限及最近错误。刷新页面后可以重新连接最近任务；取消在当前图片处理完毕后停止，保留已成功缓存的图片。同一实例每次只运行一个页面缓存任务，重复提交同一请求不会重复执行。
+- **用途分类**：页面中可新建分类并填写用途说明，直接供 AstrBot 模型理解和选图。
+
+远程搜索结果只在内存保留 10 分钟，过期后请重新搜索。任务及进度也保存在内存中，插件重载会停止任务，但已完成的图片不会丢失；页面不支持断点续传。缩略图仅展示首帧，缓存时仍保存原始图片和动画。批量任务可能因为去重而“处理成功数大于新增图片数”，图片容量达到上限时会逐项报告失败。
+
+页面使用 AstrBot 官方视图桥接接口及后台登录鉴权，不能通过双击本地 HTML 使用。API Token 留在服务器；浏览器只取得不含路径和签名链接的元数据及小缩略图，不直接获取原始凭据或缓存文件路径。
 
 ## 命令
 
@@ -122,8 +136,9 @@ HTTP 请求支持运行环境的 `HTTP_PROXY` / `HTTPS_PROXY`。插件不打印�
 
 ```powershell
 python -m pytest -q tests
-ruff format --check main.py emoji_cache.py tests scripts
-ruff check main.py emoji_cache.py tests scripts
+ruff format --check main.py emoji_cache.py admin_page.py tests scripts
+ruff check main.py emoji_cache.py admin_page.py tests scripts
+node --check views/admin/app.js
 python scripts/validate_plugin_layout.py
 python scripts/astrbot_smoke.py --astrbot-root E:\code\AstrBot
 ```
@@ -131,6 +146,8 @@ python scripts/astrbot_smoke.py --astrbot-root E:\code\AstrBot
 添加 `--live` 可读取 AstrBot `data/config/astrbot_plugin_wuwaemoji_config.json` 中的 Token，验证真实 API 搜索、随机及图片下载和本地缓存。冒烟测试使用独立临时图库并清理，不修改正式图库；模型工具发送只验证模拟发送流程，不代表已通过真实聊天平台或真实模型选图验证。该脚本不输出 Token 或签名图片地址。
 
 GitHub Actions 自动运行格式检查、回归测试、插件布局及安装包检查，并使用 AstrBot 源码环境执行兼容性冒烟测试，不需要个人 API Token。
+
+管理页浏览器回归测试使用 Playwright、AstrBot 原始 bridge SDK 和独立临时测试图库，覆盖单张/多张缓存、多页任务、取消、用途编辑、保存后刷新失败、亮暗主题及手机布局，不读取真实凭据。在已安装 `playwright` 的 Node 环境中设置 `ASTRBOT_TEST_ROOT` 和 `ASTRBOT_TEST_PYTHON` 后运行 `node scripts/test_admin_ui.cjs`。如需使用本机 Chrome，可设置 `ADMIN_UI_CHROME` 为其可执行文件路径。截图写入被 Git 忽略的 `.pytest_cache/admin-ui/`。
 
 ## 发布
 
