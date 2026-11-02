@@ -12,6 +12,7 @@ from PIL import Image
 root = Path(__file__).resolve().parents[1]
 required = {
     "main.py",
+    "emoji_cache.py",
     "metadata.yaml",
     "_conf_schema.json",
     "requirements.txt",
@@ -44,7 +45,12 @@ schema = json.loads((root / "_conf_schema.json").read_text(encoding="utf-8"))
 assert schema["api_token"]["default"] == ""
 with Image.open(root / "logo.png") as image:
     assert image.format == "PNG" and image.size == (256, 256)
-archives = list(root.glob("astrbot_plugin_wuwaemoji-*.zip"))
+version = str(metadata["version"])
+archives = list(
+    root.glob(
+        f"astrbot_plugin_wuwaemoji-{version if version.startswith('v') else 'v' + version}.zip"
+    )
+)
 for archive in archives:
     assert archive.stat().st_size < 16 * 1024 * 1024
     with ZipFile(archive) as package:

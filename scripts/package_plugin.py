@@ -14,6 +14,7 @@ output = (
 )
 files = (
     "main.py",
+    "emoji_cache.py",
     "metadata.yaml",
     "_conf_schema.json",
     "requirements.txt",

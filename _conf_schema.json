@@ -18,6 +18,54 @@
     "options": ["original", "webp"],
     "hint": "推荐 webp，支持服务提供的动态 WebP；original 使用原始格式（部分原图 CDN 可能返回 567）。动画展示取决于消息平台。"
   },
+  "cache_enabled": {
+    "description": "启用分类本地缓存",
+    "type": "bool",
+    "default": true,
+    "hint": "搜索及随机取图后缓存图片，保留角色标签；情感用途可由管理员归类。同图多分类不重复存储，停用后保留已有文件。"
+  },
+  "cache_max_items": {
+    "description": "最大缓存图片数量",
+    "type": "int",
+    "default": 500,
+    "hint": "范围 1–5000。达到限制后保留已整理图片，不再下载新图，可由管理员清理。"
+  },
+  "cache_max_size_mb": {
+    "description": "最大缓存容量（MiB）",
+    "type": "int",
+    "default": 256,
+    "hint": "范围 1–2048。运行数据保存在 AstrBot data/plugin_data/astrbot_plugin_wuwaemoji/emoji_cache，不随插件更新覆盖。"
+  },
+  "cache_image_limit_mb": {
+    "description": "单张图片下载上限（MiB）",
+    "type": "int",
+    "default": 10,
+    "hint": "范围 1–30，图片经完整格式及尺寸校验后入库。"
+  },
+  "cache_batch_size": {
+    "description": "管理员每次批量缓存数量",
+    "type": "int",
+    "default": 8,
+    "hint": "范围 1–20。批量缓存只取一页，不全站抓取。"
+  },
+  "enable_llm_tools": {
+    "description": "允许 AstrBot 调用表情工具",
+    "type": "bool",
+    "default": true,
+    "hint": "提供分类清单、本地检索、直接向当前聊天发图三个工具。需要当前模型支持工具调用；关闭后工具返回停用状态且不发图。"
+  },
+  "inject_category_hints": {
+    "description": "向模型提供已有分类用途提示",
+    "type": "bool",
+    "default": true,
+    "hint": "仅将有图片的分类摘要加入本轮临时上下文，不更改人格和系统提示词，不额外调用识图或向量模型。"
+  },
+  "tool_cooldown_seconds": {
+    "description": "工具发图冷却（秒）",
+    "type": "int",
+    "default": 10,
+    "hint": "范围 0–300，同一用户及会话内限制连续工具发图，0 为关闭。命令发图不受此设置影响。"
+  },
   "timeout": {
     "description": "API 请求超时（秒）",
     "type": "int",

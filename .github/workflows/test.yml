@@ -24,8 +24,8 @@ jobs:
           persist-credentials: false
       - uses: astral-sh/setup-uv@e58605a9b6da7c637471fab8847a5e5a6b8df081 # v5
       - run: uv sync --project astrbot
-      - run: uv run --project astrbot ruff format --check main.py tests scripts
-      - run: uv run --project astrbot ruff check main.py tests scripts
+      - run: uv run --project astrbot ruff format --check main.py emoji_cache.py tests scripts
+      - run: uv run --project astrbot ruff check main.py emoji_cache.py tests scripts
       - run: uv run --project astrbot python -m pytest -q tests
       - run: uv run --project astrbot python scripts/package_plugin.py
       - run: uv run --project astrbot python scripts/validate_plugin_layout.py

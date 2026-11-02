@@ -25,7 +25,7 @@ async def collect(generator):
 
 
 def plugin(config=None):
-    return main.WuwaEmojiPlugin(None, config or {})
+    return main.WuwaEmojiPlugin(None, {"cache_enabled": False} | (config or {}))
 
 
 def test_parse_filters_and_spaces():

@@ -3,10 +3,13 @@
 import argparse
 import asyncio
 import importlib.util
+import io
 import json
 import os
 import sys
+import tempfile
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 
 async def run(root: Path, live: bool):
@@ -18,12 +21,18 @@ async def run(root: Path, live: bool):
     from astrbot.core.platform.astrbot_message import AstrBotMessage, MessageMember
     from astrbot.core.platform.message_type import MessageType
     from astrbot.core.platform.platform_metadata import PlatformMetadata
+    from astrbot.core.provider.register import llm_tools
     from astrbot.core.star.filter.command import CommandFilter
     from astrbot.core.star.star_handler import star_handlers_registry
     from astrbot.core.star.star_manager import PluginManager
+    from PIL import Image as PILImage
 
     plugin_file = Path(__file__).resolve().parents[1] / "main.py"
-    spec = importlib.util.spec_from_file_location("wuwaemoji_smoke", plugin_file)
+    spec = importlib.util.spec_from_file_location(
+        "wuwaemoji_smoke",
+        plugin_file,
+        submodule_search_locations=[str(plugin_file.parent)],
+    )
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
@@ -37,7 +46,11 @@ async def run(root: Path, live: bool):
                 encoding="utf-8"
             )
         )
-    plugin = module.WuwaEmojiPlugin(None, config)
+    plugin = module.WuwaEmojiPlugin(
+        None, config | {"cache_enabled": True, "enable_llm_tools": True}
+    )
+    temporary = tempfile.TemporaryDirectory(prefix="wuwaemoji-smoke-")
+    plugin.cache = module.EmojiCache(Path(temporary.name))
     message = AstrBotMessage()
     message.type = MessageType.FRIEND_MESSAGE
     message.sender = MessageMember(user_id="smoke-test", nickname="smoke-test")
@@ -52,12 +65,42 @@ async def run(root: Path, live: bool):
             for command_filter in handler.event_filters:
                 if isinstance(command_filter, CommandFilter):
                     commands[command_filter.command_name] = command_filter
-        assert len(commands) == 5, f"Expected 5 commands, got {len(commands)}"
+        assert len(commands) == 7, f"Expected 7 commands, got {len(commands)}"
         assert commands["鸣潮表情帮助"].filter(event, {})
         result = [x async for x in plugin.help_command(event)][0]
         assert isinstance(result, MessageEventResult)
         assert any(isinstance(x, Plain) for x in result.chain)
-        print("AstrBot import, five registered commands and help message: OK")
+        print("AstrBot import, seven registered commands and help message: OK")
+        for name, expected in {
+            "list_wuwa_emoji_categories": set(),
+            "search_wuwa_emojis": {"query", "category", "character"},
+            "send_wuwa_emoji": {"emoji_id", "category", "character"},
+        }.items():
+            tool = llm_tools.get_func(name)
+            assert tool is not None
+            assert set(tool.parameters.get("properties", {})) == expected
+        buffer = io.BytesIO()
+        PILImage.new("RGB", (8, 8), "blue").save(buffer, format="PNG")
+        cached = await plugin.cache.put(
+            {"id": "smoke", "characters": [{"name": "爱弥斯", "slug": "aimisi"}]},
+            buffer.getvalue(),
+            "开心",
+        )
+        event.send = AsyncMock()
+        send_tool = llm_tools.get_func("send_wuwa_emoji")
+        result = await send_tool.handler(
+            plugin, event, emoji_id=cached["id"], category="开心", character="爱弥斯"
+        )
+        assert "已向当前聊天" in result
+        sent = event.send.call_args.args[0]
+        assert isinstance(sent, MessageEventResult) and isinstance(sent.chain[0], Image)
+        req = module.ProviderRequest(system_prompt="unchanged")
+        await plugin.category_hints(event, req)
+        assert req.system_prompt == "unchanged" and req.extra_user_content_parts
+        await plugin.cache.clear("全部")
+        print(
+            "Three actual AstrBot tool schemas, callable send handler and category context: OK (simulated transport)"
+        )
         if live:
             data = await plugin.request_api(
                 "/emojis",
@@ -77,22 +120,23 @@ async def run(root: Path, live: bool):
             assert commands["鸣潮表情"].filter(event, {})
             result = [x async for x in plugin.random_emoji(event)][0]
             assert isinstance(result.chain[0], Image)
-            # Signed media links must work without sending the private API Token.
-            async with plugin.session.get(
-                result.chain[0].file,
-                headers={"Accept": "image/*"},
-                allow_redirects=True,
-            ) as response:
-                assert response.status == 200
-                assert response.headers.get("Content-Type", "").startswith("image/")
-                image_bytes = await response.read()
-                assert image_bytes
-                print(
-                    f"Live image download without Token: OK ({len(image_bytes)} bytes)"
-                )
+            image_path = Path(await result.chain[0].convert_to_file_path())
+            assert image_path.is_file() and image_path.is_relative_to(
+                Path(temporary.name)
+            )
+            print(
+                f"Live download and persistent local image result: OK ({image_path.stat().st_size} bytes)"
+            )
+            catalog = await plugin.cache.catalog()
+            assert catalog["count"] > 0
+            assert any(
+                x["name"].startswith("角色：") and x["count"]
+                for x in catalog["categories"]
+            )
             print("Actual AstrBot search, select and random image results: OK")
     finally:
         await plugin.terminate()
+        temporary.cleanup()
 
 
 if __name__ == "__main__":
