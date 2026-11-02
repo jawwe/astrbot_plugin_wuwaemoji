@@ -41,11 +41,37 @@ const { chromium } = require("playwright");
     await view.locator("img.loaded").first().waitFor();
     const uiFrame = page.frames().find((frame) => frame.url().endsWith("/view/"));
     await uiFrame.waitForFunction(() => [...document.querySelectorAll(".image-area img")].every((img) => img.classList.contains("loaded")));
+    const motionId = await view.locator('img[src^="data:image/gif;base64,"]').first().evaluate((image) => image.closest(".emoji-card").dataset.id);
+    const motion = view.locator(`.emoji-card[data-id="${motionId}"] img`);
+    await motion.scrollIntoViewIfNeeded();
+    const firstFrame = await motion.screenshot();
+    let moved = false;
+    for (let attempt = 0; attempt < 8; attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, 110));
+      if (!(await motion.screenshot()).equals(firstFrame)) { moved = true; break; }
+    }
+    assert(moved, "Native animation must visibly change frames in the browser");
+    await view.locator("#play-animations").uncheck();
+    assert((await motion.getAttribute("src")).startsWith("data:image/webp;base64,"), "Paused images use a static poster");
+    await view.locator("#play-animations").check();
+    await motion.scrollIntoViewIfNeeded();
+    await uiFrame.waitForFunction((id) => document.querySelector(`.emoji-card[data-id="${id}"] img`).getAttribute("src").startsWith("data:image/gif;base64,"), motionId);
     const output = path.join(root, ".pytest_cache", "admin-ui");
     fs.mkdirSync(output, { recursive: true });
     await page.screenshot({ path: path.join(output, "desktop-local.png"), fullPage: true, animations: "disabled" });
 
     await view.getByRole("tab", { name: "小站搜索" }).click();
+    const packsRequest = page.waitForRequest((request) => request.url().endsWith("/admin/site/packs") && request.method() === "POST");
+    await view.locator('.site-category[data-name="爱弥斯"]').click();
+    assert.equal((await packsRequest).postDataJSON().filters.character, "aimisi", "Selected category must use its canonical site slug");
+    await view.locator(".site-pack").nth(1).waitFor();
+    await view.locator('#site-catalog-form [name="kind"]').selectOption("artists");
+    await view.locator('.site-category[data-name="雾雪"]').click();
+    await view.locator('.site-pack[data-pack="fixture-pack-1"]').click();
+    await view.locator("#selected-pack").waitFor();
+    assert.equal(await view.locator('#remote-form [name="pack"]').inputValue(), "fixture-pack-1");
+    await view.locator(".emoji-card").nth(1).waitFor();
+    await view.locator("#clear-pack").click();
     await view.locator('#remote-form input[name="character"]').fill("爱弥斯");
     await view.getByRole("button", { name: "搜索小站", exact: true }).click();
     await view.locator(".emoji-card").nth(7).waitFor();
@@ -65,6 +91,12 @@ const { chromium } = require("playwright");
     await view.locator("#job-counts").filter({ hasText: "成功 4" }).waitFor({ timeout: 15000 });
     await view.locator("#job-state").filter({ hasText: "缓存完成" }).waitFor();
     await page.screenshot({ path: path.join(output, "desktop-batch.png"), fullPage: true });
+
+    await view.locator('.site-pack[data-pack="fixture-pack-1"]').click();
+    await view.locator("#cache-pack").click();
+    await view.locator("#job-counts").filter({ hasText: "成功 6" }).waitFor({ timeout: 15000 });
+    await view.locator("#job-state").filter({ hasText: "缓存完成" }).waitFor();
+    await view.locator("#clear-pack").click();
 
     await view.locator('#batch-form input[name="pages"]').fill("5");
     await view.locator('#batch-form input[name="start_page"]').fill("4");
@@ -103,7 +135,7 @@ const { chromium } = require("playwright");
     await view.locator(".emoji-card").first().waitFor();
     await view.locator("#job-state").filter({ hasText: "任务已取消" }).waitFor();
     assert.deepEqual(errors, [], "No browser runtime errors");
-    console.log("Admin UI: real bridge, local previews, selected/multi-page cache, cancellation, classification, refresh failure, themes and mobile layout: OK");
+    console.log("Admin UI: live directories, category-to-pack browsing, bounded pack caching, visible animation/pause, real bridge, cancellation and mobile layout: OK");
     console.log(`Screenshots: ${output}`);
   } catch (error) {
     if (browser) {

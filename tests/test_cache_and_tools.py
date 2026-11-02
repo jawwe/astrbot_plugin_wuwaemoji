@@ -137,6 +137,42 @@ def test_content_shared_between_characters_retains_curated_description(tmp_path)
     asyncio.run(run())
 
 
+def test_multi_character_pack_preserves_all_site_labels(tmp_path):
+    async def run():
+        cache = EmojiCache(tmp_path)
+        source = record()
+        source["characters"] = [
+            {"name": f"角色{index}", "slug": f"role-{index}"} for index in range(24)
+        ]
+        saved = await cache.put(source, image_bytes())
+        assert len(saved["characters"]) == 24
+        assert await cache.search(character="role-23")
+        assert "角色：角色23" in saved["categories"]
+
+    asyncio.run(run())
+
+
+def test_cache_reuse_refreshes_site_labels_without_downloading(plugin):
+    async def run():
+        saved = await plugin.cache.put(record(), image_bytes(), "开心")
+        await plugin.cache.classify(saved["id"], "开心", "管理员描述")
+        updated = record()
+        updated["characters"].append({"name": "漂泊者", "slug": "rover"})
+        updated.pop("pack")
+        plugin.download_image = AsyncMock(
+            side_effect=AssertionError("must reuse cache")
+        )
+        assert await plugin.cache_image(updated, "赞同", required=True) == saved["path"]
+        result = await plugin.cache.search(character="rover", category="赞同")
+        assert (
+            result[0]["description"] == "管理员描述"
+            and result[0]["title"] == saved["title"]
+        )
+        plugin.download_image.assert_not_called()
+
+    asyncio.run(run())
+
+
 @pytest.mark.parametrize(
     "name", ["../abc", "x/y", "x\\y", "", "全部", "角色：爱弥斯", "x" * 41]
 )

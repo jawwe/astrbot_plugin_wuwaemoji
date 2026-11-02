@@ -41,12 +41,32 @@ def create_app(astrbot_root: Path):
         draw.arc((105, 94, 157, 134), 0, 180, fill="#3f5a5f", width=4)
         draw.text((90, 188), f"NICE! {identifier}", fill="#3f5a5f")
         output = io.BytesIO()
-        image.save(output, "PNG")
+        animated = number % 2 == 0
+        if animated:
+            second = image.copy()
+            second_draw = ImageDraw.Draw(second)
+            second_draw.ellipse(
+                (67, 38, 194, 167), fill="#f1ae7b", outline="#3f5a5f", width=4
+            )
+            second_draw.arc((94, 75, 116, 95), 180, 360, fill="#3f5a5f", width=4)
+            second_draw.arc((144, 75, 166, 95), 180, 360, fill="#3f5a5f", width=4)
+            second_draw.ellipse((116, 108, 145, 132), fill="#3f5a5f")
+            image.save(
+                output,
+                "GIF",
+                save_all=True,
+                append_images=[second],
+                duration=[150, 150],
+                loop=0,
+            )
+        else:
+            image.save(output, "PNG")
         images[identifier] = output.getvalue()
         return {
             "id": identifier,
             "url": "https://emoji.wuwa.games/media?ticket=synthetic",
-            "format": "png",
+            "format": "gif" if animated else "png",
+            "animated": animated,
             "characters": [{"name": "爱弥斯", "slug": "aimisi"}],
             "pack": {
                 "title": [
@@ -62,6 +82,53 @@ def create_app(astrbot_root: Path):
         await asyncio.sleep(0.04)
         page = params.get("page", 1)
         size = params.get("size", 20)
+        if endpoint == "/characters":
+            return {
+                "items": [
+                    {"slug": "aimisi", "name": "爱弥斯", "count": 24, "packCount": 2},
+                    {"slug": "rover", "name": "漂泊者", "count": 12, "packCount": 1},
+                ],
+                "page": page,
+                "total": 2,
+                "hasNext": False,
+            }
+        if endpoint == "/artists":
+            return {
+                "items": [
+                    {"slug": "wuxue", "name": "雾雪", "count": 24, "packCount": 2}
+                ],
+                "page": page,
+                "total": 1,
+                "hasNext": False,
+            }
+        if endpoint == "/packs":
+            return {
+                "items": [
+                    {
+                        "id": f"fixture-pack-{index + 1}",
+                        "title": title,
+                        "count": 6 if index == 0 else 4,
+                        "characters": [{"name": "爱弥斯", "slug": "aimisi"}],
+                        "artists": [{"name": "雾雪", "slug": "wuxue"}],
+                    }
+                    for index, title in enumerate(
+                        ["爱弥斯 · 问候动态表情包", "爱弥斯 · 心情精选"]
+                    )
+                ],
+                "page": page,
+                "total": 2,
+                "hasNext": False,
+            }
+        if params.get("pack"):
+            return {
+                "items": [
+                    make_item(f"{params['pack']}-{page}-{index}", index)
+                    for index in range(min(2, size))
+                ],
+                "page": page,
+                "total": 6,
+                "hasNext": page < 3,
+            }
         items = [
             make_item(f"remote-{page}-{index}", index) for index in range(min(8, size))
         ]

@@ -1,3 +1,4 @@
+import asyncio
 import json
 import random
 import shlex
@@ -217,7 +218,7 @@ class WuwaEmojiPlugin(Star):
             )
         headers = {
             "Accept": "application/json",
-            "User-Agent": "astrbot_plugin_wuwaemoji/1.2.0 (AstrBot plugin)",
+            "User-Agent": "astrbot_plugin_wuwaemoji/1.3.0 (AstrBot plugin)",
         }
         token = str(self.config.get("api_token", "") or "").strip()
         if token:
@@ -292,9 +293,11 @@ class WuwaEmojiPlugin(Star):
                     if candidate["source_id"] == item["id"] and Path(
                         candidate["path"]
                     ).suffix.lstrip(".") == item.get("format"):
-                        if category:
-                            await self.cache.classify(candidate["id"], category)
-                        return candidate["path"]
+                        content = await asyncio.to_thread(
+                            Path(candidate["path"]).read_bytes
+                        )
+                        refreshed = await self.cache.put(item, content, category)
+                        return refreshed["path"]
             content = await self.download_image(item)
             record = await self.cache.put(item, content, category)
             return record["path"]
@@ -342,7 +345,7 @@ class WuwaEmojiPlugin(Star):
                 target,
                 headers={
                     "Accept": "image/*",
-                    "User-Agent": "astrbot_plugin_wuwaemoji/1.2.0",
+                    "User-Agent": "astrbot_plugin_wuwaemoji/1.3.0",
                 },
                 allow_redirects=False,
             ) as response:

@@ -3,6 +3,7 @@
 import asyncio
 import base64
 import io
+import math
 import secrets
 import time
 from collections import OrderedDict
@@ -32,6 +33,9 @@ class AdminPage:
         self.start_lock = asyncio.Lock()
         self.preview_limit = asyncio.Semaphore(2)
         self.previews = OrderedDict()
+        self.preview_bytes = 0
+        self.site_catalogs = OrderedDict()
+        self.catalog_lock = asyncio.Lock()
 
     def register(self, context):
         """Register only plugin-scoped routes behind Dashboard authentication.
@@ -43,6 +47,8 @@ class AdminPage:
             "overview": "GET",
             "library": "GET",
             "search": "POST",
+            "site/catalog": "GET",
+            "site/packs": "POST",
             "preview": "GET",
             "categories": "POST",
             "classify": "POST",
@@ -227,6 +233,101 @@ class AdminPage:
                         ],
                     }
                 )
+            if action == "site/catalog":
+                kind = request.query.get("kind", "characters")
+                if kind not in {"characters", "artists"}:
+                    raise CacheError("小站目录仅支持人物或画师分类。")
+                page = self.number(request.query.get("page", "1"), 1, 100000)
+                query = request.query.get("q", "")
+                if not isinstance(query, str) or len(query) > 200:
+                    raise CacheError("分类关键词最多 200 字。")
+                key = (kind, query.strip(), page)
+                async with self.catalog_lock:
+                    cached = self.site_catalogs.get(key)
+                    if (
+                        cached
+                        and cached[0] > time.monotonic()
+                        and request.query.get("refresh") != "1"
+                    ):
+                        return json_response(cached[1])
+                    result = await self.plugin.request_api(
+                        "/" + kind,
+                        {
+                            "q": query.strip(),
+                            "page": page,
+                            "size": 100,
+                            "sort": "count",
+                            "order": "desc",
+                        },
+                    )
+                    items = result.get("items")
+                    if (
+                        not isinstance(items, list)
+                        or len(items) > 100
+                        or not all(
+                            isinstance(item, dict)
+                            and isinstance(item.get("name"), str)
+                            and isinstance(item.get("slug"), str)
+                            for item in items
+                        )
+                    ):
+                        raise CacheError("小站返回的分类目录无效。")
+                    data = {
+                        "kind": kind,
+                        "page": page,
+                        "total": result.get("total", len(items)),
+                        "has_next": bool(result.get("hasNext")),
+                        "items": [
+                            {
+                                "name": item["name"][:80],
+                                "slug": item["slug"][:200],
+                                "count": item.get("count", 0),
+                                "pack_count": item.get("packCount", 0),
+                            }
+                            for item in items
+                        ],
+                    }
+                    self.site_catalogs[key] = (time.monotonic() + 300, data)
+                    self.site_catalogs.move_to_end(key)
+                    while len(self.site_catalogs) > 16:
+                        self.site_catalogs.popitem(last=False)
+                    return json_response(data)
+            if action == "site/packs":
+                filters = self.filters(body.get("filters", {}))
+                filters.pop("pack", None)
+                page = self.number(body.get("page", 1), 1, 100000)
+                result = await self.plugin.request_api(
+                    "/packs", filters | {"page": page, "size": 20, "sort": "newest"}
+                )
+                items = result.get("items")
+                if (
+                    not isinstance(items, list)
+                    or len(items) > 20
+                    or not all(
+                        isinstance(item, dict)
+                        and isinstance(item.get("id"), str)
+                        and isinstance(item.get("title"), str)
+                        for item in items
+                    )
+                ):
+                    raise CacheError("小站返回的表情包列表无效。")
+                return json_response(
+                    {
+                        "page": page,
+                        "total": result.get("total", len(items)),
+                        "has_next": bool(result.get("hasNext")),
+                        "items": [
+                            {
+                                "id": item["id"][:200],
+                                "title": item["title"][:300],
+                                "count": item.get("count", 0),
+                                "characters": item.get("characters", []),
+                                "artists": item.get("artists", []),
+                            }
+                            for item in items
+                        ],
+                    }
+                )
             if action == "search":
                 filters = self.filters(body.get("filters", {}))
                 page = self.number(body.get("page", 1), 1, 100000)
@@ -290,11 +391,24 @@ class AdminPage:
                             if source == "remote"
                             else await asyncio.to_thread(Path(item["path"]).read_bytes)
                         )
-                        self.previews[key] = await asyncio.to_thread(
-                            self.thumbnail, content
+                        preview = await asyncio.to_thread(self.thumbnail, content)
+                        if key in self.previews:
+                            previous = self.previews.pop(key)
+                            self.preview_bytes -= len(previous["data_url"]) + len(
+                                previous.get("poster_url", "")
+                            )
+                        self.previews[key] = preview
+                        self.preview_bytes += len(preview["data_url"]) + len(
+                            preview.get("poster_url", "")
                         )
-                        while len(self.previews) > 48:
-                            self.previews.popitem(last=False)
+                        while (
+                            len(self.previews) > 48
+                            or self.preview_bytes > 32 * 1024 * 1024
+                        ):
+                            _, previous = self.previews.popitem(last=False)
+                            self.preview_bytes -= len(previous["data_url"]) + len(
+                                previous.get("poster_url", "")
+                            )
                 self.previews.move_to_end(key)
                 return json_response(self.previews[key])
             if action == "categories":
@@ -366,7 +480,7 @@ class AdminPage:
 
     @staticmethod
     def thumbnail(content):
-        """Produce a small static preview without changing cached originals.
+        """Preserve native animation and provide a small poster for pausing.
 
         Args:
             content: Validated or bounded downloaded image bytes.
@@ -378,16 +492,32 @@ class AdminPage:
             with Image.open(io.BytesIO(content)) as image:
                 if image.width * image.height > 25_000_000:
                     raise ValueError
+                mime = {
+                    "GIF": "image/gif",
+                    "WEBP": "image/webp",
+                    "PNG": "image/png",
+                    "JPEG": "image/jpeg",
+                }.get(image.format)
+                if mime is None:
+                    raise ValueError
                 animated = bool(getattr(image, "is_animated", False))
+                if animated and len(content) > 8 * 1024 * 1024:
+                    raise CacheError("动态图超过 8 MiB，暂不直接预览；仍可缓存原图。")
                 image.seek(0)
                 image.thumbnail((280, 280))
                 output = io.BytesIO()
                 image.convert("RGBA").save(output, format="WEBP", quality=75)
-                return {
-                    "data_url": "data:image/webp;base64,"
-                    + base64.b64encode(output.getvalue()).decode("ascii"),
-                    "animated": animated,
-                }
+                poster = "data:image/webp;base64," + base64.b64encode(
+                    output.getvalue()
+                ).decode("ascii")
+                if animated:
+                    return {
+                        "data_url": f"data:{mime};base64,"
+                        + base64.b64encode(content).decode("ascii"),
+                        "poster_url": poster,
+                        "animated": True,
+                    }
+                return {"data_url": poster, "animated": False}
         except (ValueError, OSError, Image.DecompressionBombError):
             raise CacheError("该图片无法生成预览，原文件未被修改。") from None
 
@@ -431,13 +561,27 @@ class AdminPage:
             items = [rows[x] for x in dict.fromkeys(ids)]
             inputs = {"items": items}
             pages, maximum = 1, len(items)
-        elif mode == "query":
-            filters = self.filters(body.get("filters", {}))
-            if not any(key in filters for key in ("character", "artist", "pack", "q")):
-                raise CacheError("批量缓存请至少填写人物、画师、表情包或关键词之一。")
-            pages = self.number(body.get("pages", 1), 1, 5)
+        elif mode in {"query", "pack"}:
+            if mode == "pack":
+                filters = self.filters({"pack": body.get("pack", "")})
+                if not filters.get("pack"):
+                    raise CacheError("请选择小站表情包。")
+                maximum = self.number(body.get("maximum", 100), 1, 100)
+                size = max(
+                    1, min(20, int(self.plugin.config.get("cache_batch_size", 8)))
+                )
+                pages = math.ceil(maximum / size)
+            else:
+                filters = self.filters(body.get("filters", {}))
+                if not any(
+                    key in filters for key in ("character", "artist", "pack", "q")
+                ):
+                    raise CacheError(
+                        "批量缓存请至少填写人物、画师、表情包或关键词之一。"
+                    )
+                pages = self.number(body.get("pages", 1), 1, 5)
+                maximum = self.number(body.get("maximum", 20), 1, 100)
             start = self.number(body.get("start_page", 1), 1, 100000)
-            maximum = self.number(body.get("maximum", 20), 1, 100)
             inputs = {"filters": filters, "start": start}
         else:
             raise CacheError("缓存任务类型无效。")
@@ -485,7 +629,7 @@ class AdminPage:
                         | self.plugin.media_params()
                         | {
                             "page": inputs["start"] + offset,
-                            "size": min(size, job["total"] - job["done"]),
+                            "size": size,
                         },
                     )
                     items = result.get("items")
@@ -538,3 +682,5 @@ class AdminPage:
                 await asyncio.gather(self.task, return_exceptions=True)
         self.snapshots.clear()
         self.previews.clear()
+        self.preview_bytes = 0
+        self.site_catalogs.clear()

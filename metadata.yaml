@@ -1,8 +1,8 @@
 name: astrbot_plugin_wuwaemoji
 display_name: 鸣潮表情包
-short_desc: 鸣潮表情搜索、管理页面与批量缓存，支持 AI 工具直接发图。
-desc: 使用呜哇小站 API 搜索鸣潮表情包，支持人物和情感用途并行分类、可视化图库管理、手动及多页批量缓存，以及 AstrBot 模型检索和直接发图工具。
-version: v1.2.0
+short_desc: 拉取小站人物与画师分类，浏览动图表情包并批量缓存。
+desc: 提供小站人物、画师分类目录及表情包浏览，支持动态预览、按包批量缓存、人物和情感用途并行分类，以及 AstrBot 模型检索和直接发图工具。
+version: v1.3.0
 author: jawwe
 repo: https://github.com/jawwe/astrbot_plugin_wuwaemoji
 astrbot_version: ">=4.29.0"

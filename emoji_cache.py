@@ -187,6 +187,7 @@ class EmojiCache:
                     }.get(image.format)
                     if suffix is None or image.width * image.height > 25_000_000:
                         raise ValueError
+                    animated = bool(getattr(image, "is_animated", False))
                     image.verify()
             except (ValueError, OSError, Image.DecompressionBombError):
                 raise CacheError("下载内容不是受支持的安全图片。") from None
@@ -212,7 +213,7 @@ class EmojiCache:
                 }
                 for x in characters
                 if isinstance(x, dict)
-            ][:10]
+            ][:100]
             artists = [
                 {
                     "name": str(x.get("name", ""))[:80],
@@ -220,19 +221,19 @@ class EmojiCache:
                 }
                 for x in artists
                 if isinstance(x, dict)
-            ][:10]
+            ][:100]
             if existing:
                 characters = list(
                     {
                         (x["name"], x["slug"]): x
                         for x in existing["characters"] + characters
                     }.values()
-                )[:20]
+                )[:100]
                 artists = list(
                     {
                         (x["name"], x["slug"]): x for x in existing["artists"] + artists
                     }.values()
-                )[:20]
+                )[:100]
             pack = item.get("pack") if isinstance(item.get("pack"), dict) else {}
             source = urlsplit(str(item.get("sourceUrl", "")))
             source_url = (
@@ -264,12 +265,17 @@ class EmojiCache:
             record = {
                 "file": filename,
                 "bytes": len(content),
+                "animated": animated,
                 "categories": categories,
-                "source_id": str(item.get("id", ""))[:150],
-                "title": str(pack.get("title", ""))[:300],
+                "source_id": str(
+                    item.get("id") or (existing or {}).get("source_id", "")
+                )[:150],
+                "title": str(pack.get("title") or (existing or {}).get("title", ""))[
+                    :300
+                ],
                 "characters": characters,
                 "artists": artists,
-                "source_url": source_url,
+                "source_url": source_url or (existing or {}).get("source_url", ""),
                 "description": existing["description"] if existing else "",
                 "updated": time.time(),
             }

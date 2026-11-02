@@ -43,10 +43,10 @@
     "hint": "范围 1–30，图片经完整格式及尺寸校验后入库。"
   },
   "cache_batch_size": {
-    "description": "管理员每次批量缓存数量",
+    "description": "管理员批量缓存每页数量",
     "type": "int",
     "default": 8,
-    "hint": "范围 1–20。批量缓存只取一页，不全站抓取。"
+    "hint": "范围 1–20。命令单次取一页；管理页按此数量连续拉取，仍受任务页数或图片总量上限约束。"
   },
   "enable_llm_tools": {
     "description": "允许 AstrBot 调用表情工具",

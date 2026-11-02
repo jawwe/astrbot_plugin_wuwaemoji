@@ -1,6 +1,15 @@
 const bridge = window.AstrBotPluginView || window.AstrBotPluginPage;
 const $ = (selector) => document.querySelector(selector);
 const state = { tab: "local", page: 1, items: [], selected: new Set(), snapshot: "", catalog: null, enabled: true, job: null, generation: 0, loading: false, applying: false, editId: "", poll: null, filters: { local: {}, remote: {} } };
+Object.assign(state, { siteReady: false, catalogPage: 1, catalogGeneration: 0, packsPage: 1, packsGeneration: 0, pack: null, playAnimations: !matchMedia("(prefers-reduced-motion: reduce)").matches });
+const previewData = new WeakMap();
+const visibility = new IntersectionObserver((entries) => {
+  for (const entry of entries) {
+    const data = previewData.get(entry.target);
+    if (data) { data.visible = entry.isIntersecting; applyAnimation(entry.target, data); }
+  }
+}, { rootMargin: "120px" });
+$("#play-animations").checked = state.playAnimations;
 
 function notice(text, kind = "") {
   $("#notice").textContent = text;
@@ -8,7 +17,14 @@ function notice(text, kind = "") {
 }
 
 function formValues(form) {
-  return Object.fromEntries([...new FormData(form)].map(([key, value]) => [key, value.trim()]));
+  const values = Object.fromEntries([...new FormData(form)].map(([key, value]) => [key, value.trim()]));
+  if (form.id === "remote-form") {
+    for (const field of ["character", "artist"]) {
+      const input = form.querySelector(`[name="${field}"]`);
+      if (input.dataset.siteName === values[field] && input.dataset.siteSlug) values[field] = input.dataset.siteSlug;
+    }
+  }
+  return values;
 }
 
 function element(tag, className = "", text = "") {
@@ -66,9 +82,117 @@ function updateSelection() {
     action.disabled = state.tab === "remote" && (!state.enabled || active || state.applying);
   }
   $("#batch-form button").disabled = !state.enabled || active || state.applying;
+  $("#cache-pack").disabled = !state.pack || !state.enabled || active || state.applying;
+}
+
+function applyAnimation(image, data) {
+  const playing = data.animated && state.playAnimations && data.visible;
+  const source = playing ? data.motion : data.still;
+  if (image.getAttribute("src") !== source) image.src = source;
+  if (data.animated) image.closest(".emoji-card").querySelector(".format-badge").textContent = playing ? "动态 · 播放中" : "动态 · 已暂停";
+}
+
+async function loadSiteCatalog(page = 1, refresh = false) {
+  const generation = ++state.catalogGeneration;
+  const values = formValues($("#site-catalog-form"));
+  $("#catalog-status").textContent = "正在拉取小站分类…";
+  $("#site-categories").replaceChildren();
+  $("#catalog-previous").disabled = true;
+  $("#catalog-next").disabled = true;
+  try {
+    const data = await bridge.apiGet("admin/site/catalog", { ...values, page, refresh: refresh ? "1" : "0" });
+    if (generation !== state.catalogGeneration) return;
+    state.siteReady = true;
+    state.catalogPage = page;
+    $("#catalog-status").textContent = `来自小站的${values.kind === "characters" ? "人物" : "画师"}分类 · 共 ${data.total} 项 · 第 ${page} 页`;
+    const field = values.kind === "characters" ? "character" : "artist";
+    for (const item of data.items) {
+      const button = element("button", "site-category");
+      button.type = "button";
+      button.dataset.name = item.name;
+      button.classList.toggle("selected", $(`#remote-form [name="${field}"]`).value === item.name);
+      button.append(element("span", "", item.name), element("small", "", `${item.pack_count} 包 · ${item.count} 张`));
+      button.addEventListener("click", async () => {
+        const input = $(`#remote-form [name="${field}"]`);
+        input.value = item.name;
+        input.dataset.siteName = item.name;
+        input.dataset.siteSlug = item.slug;
+        $("#remote-form [name=pack]").value = "";
+        state.pack = null;
+        $("#selected-pack").hidden = true;
+        for (const sibling of $("#site-categories").children) sibling.classList.toggle("selected", sibling === button);
+        state.filters.remote = formValues($("#remote-form"));
+        resetRemoteGallery("已选择小站分类", "下方已拉取对应表情包；选择一个包查看，或浏览该分类的全部表情。");
+        await loadSitePacks();
+      });
+      $("#site-categories").append(button);
+    }
+    $("#catalog-previous").disabled = page <= 1;
+    $("#catalog-next").disabled = !data.has_next;
+    if (!data.items.length) $("#catalog-status").textContent += " · 没有匹配项";
+  } catch (error) {
+    if (generation === state.catalogGeneration) $("#catalog-status").textContent = `分类拉取失败：${error.message}，可点击“拉取分类”重试。`;
+  }
+}
+
+async function loadSitePacks(page = 1) {
+  const generation = ++state.packsGeneration;
+  const filters = formValues($("#remote-form"));
+  delete filters.pack;
+  $("#site-packs-panel").hidden = false;
+  $("#site-packs").replaceChildren();
+  $("#packs-status").textContent = "正在拉取分类下的表情包…";
+  $("#packs-previous").disabled = true;
+  $("#packs-next").disabled = true;
+  try {
+    const data = await bridge.apiPost("admin/site/packs", { filters, page });
+    if (generation !== state.packsGeneration) return;
+    state.packsPage = page;
+    $("#packs-status").textContent = `共 ${data.total} 个表情包 · 第 ${page} 页 · 点击表情包查看图片`;
+    for (const pack of data.items) {
+      const button = element("button", "site-pack");
+      button.type = "button";
+      button.dataset.pack = pack.id;
+      button.append(element("strong", "", pack.title), element("small", "", `${pack.count} 张 · ${(pack.artists || []).map((artist) => artist.name).join("、") || "多人/未标注画师"}`));
+      button.addEventListener("click", async () => {
+        state.pack = pack;
+        $("#remote-form [name=pack]").value = pack.id;
+        $("#selected-pack-title").textContent = pack.title;
+        $("#selected-pack-count").textContent = `小站目录 ${pack.count} 张 · 批量缓存本次最多 100 张`;
+        $("#selected-pack").hidden = false;
+        $("#site-directory").open = false;
+        state.filters.remote = formValues($("#remote-form"));
+        await loadItems();
+      });
+      $("#site-packs").append(button);
+    }
+    if (!data.items.length) $("#packs-status").textContent = "当前人物、画师或关键词条件下没有表情包，请调整条件。";
+    $("#packs-previous").disabled = page <= 1;
+    $("#packs-next").disabled = !data.has_next;
+  } catch (error) {
+    if (generation === state.packsGeneration) $("#packs-status").textContent = `表情包拉取失败：${error.message}`;
+  }
+}
+
+function resetRemoteGallery(title, description) {
+  ++state.generation;
+  state.page = 1;
+  state.snapshot = "";
+  state.items = [];
+  state.selected.clear();
+  state.loading = false;
+  $("#page-number").textContent = "第 1 页";
+  $("#gallery").setAttribute("aria-busy", "false");
+  renderCards();
+  $("#empty-title").textContent = title;
+  $("#empty-description").textContent = description;
+  $("#previous").disabled = true;
+  $("#next").disabled = true;
+  $("#result-count").textContent = "尚未读取图片";
 }
 
 function renderCards() {
+  visibility.disconnect();
   const gallery = $("#gallery");
   gallery.replaceChildren();
   state.items.forEach((item) => {
@@ -88,7 +212,7 @@ function renderCards() {
     image.alt = item.title;
     const preview = element("div", "preview-status", "正在准备预览…");
     area.append(image, preview);
-    const badge = element("span", "format-badge", item.animated ? "动态 · 缩略图" : (item.format || "图片").toUpperCase());
+    const badge = element("span", "format-badge", item.animated ? "动态" : (item.format || "图片").toUpperCase());
     const body = element("div", "card-body");
     const title = element("p", "card-title", item.description || item.title);
     title.title = item.description || item.title;
@@ -119,14 +243,17 @@ async function previewOne(item, generation) {
   try {
     const data = await bridge.apiGet("admin/preview", { source: state.tab === "local" ? "local" : "remote", id: item.id, snapshot: state.snapshot });
     if (generation !== state.generation || !card.isConnected) return;
-    if (typeof data.data_url !== "string" || !data.data_url.startsWith("data:image/webp;base64,")) throw new Error("预览格式无效");
+    if (typeof data.data_url !== "string" || !/^data:image\/(webp|gif|png);base64,/.test(data.data_url)) throw new Error("预览格式无效");
+    if (data.animated && (typeof data.poster_url !== "string" || !data.poster_url.startsWith("data:image/webp;base64,"))) throw new Error("动图封面无效");
     const image = card.querySelector("img");
     image.onload = () => { status.hidden = true; image.classList.add("loaded"); };
-    image.src = data.data_url;
-    if (data.animated) card.querySelector(".format-badge").textContent = "动态 · 缩略图";
-  } catch {
+    const sources = { motion: data.data_url, still: data.poster_url || data.data_url, animated: data.animated, visible: true };
+    previewData.set(image, sources);
+    applyAnimation(image, sources);
+    visibility.observe(image);
+  } catch (error) {
     if (generation !== state.generation || !card.isConnected) return;
-    status.replaceChildren(document.createTextNode("暂时无法预览"));
+    status.replaceChildren(document.createTextNode(String(error.message || "暂时无法预览").slice(0, 180)));
     const retry = element("button", "text-button", "重试预览");
     retry.type = "button";
     retry.addEventListener("click", () => { status.textContent = "正在准备预览…"; previewOne(item, generation); });
@@ -259,21 +386,10 @@ async function changeTab(tab) {
   $("#local-panel").hidden = tab !== "local";
   $("#remote-panel").hidden = tab !== "remote";
   $("#source-note").textContent = tab === "local" ? "人物与用途，可以一起筛选" : "挑选喜欢的表情，再存入本地";
+  if (tab === "remote" && !state.siteReady) await loadSiteCatalog();
+  if (state.tab !== tab) return;
   if (tab === "remote" && !Object.keys(state.filters.remote).length) {
-    ++state.generation;
-    state.page = 1;
-    state.snapshot = "";
-    $("#page-number").textContent = "第 1 页";
-    state.items = [];
-    state.selected.clear();
-    state.loading = false;
-    $("#gallery").setAttribute("aria-busy", "false");
-    renderCards();
-    $("#empty-title").textContent = "去小站挑选喜欢的表情";
-    $("#empty-description").textContent = "填写人物或其他条件开始搜索，也可直接搜索浏览全部。";
-    $("#previous").disabled = true;
-    $("#next").disabled = true;
-    $("#result-count").textContent = "尚未搜索";
+    resetRemoteGallery("去小站挑选喜欢的表情", "先选人物或画师分类，再选择表情包；也可填写条件直接搜索图片。");
     return;
   }
   await loadItems();
@@ -281,6 +397,39 @@ async function changeTab(tab) {
 
 $("#local-form").addEventListener("submit", (event) => { event.preventDefault(); state.filters.local = formValues(event.currentTarget); loadItems(); });
 $("#remote-form").addEventListener("submit", (event) => { event.preventDefault(); state.filters.remote = formValues(event.currentTarget); loadItems(); });
+$("#site-catalog-form").addEventListener("submit", (event) => { event.preventDefault(); loadSiteCatalog(); });
+$("#site-catalog-form [name=kind]").addEventListener("change", () => loadSiteCatalog());
+$("#catalog-refresh").addEventListener("click", () => loadSiteCatalog(state.catalogPage, true));
+$("#catalog-previous").addEventListener("click", () => loadSiteCatalog(state.catalogPage - 1));
+$("#catalog-next").addEventListener("click", () => loadSiteCatalog(state.catalogPage + 1));
+$("#packs-previous").addEventListener("click", () => loadSitePacks(state.packsPage - 1));
+$("#packs-next").addEventListener("click", () => loadSitePacks(state.packsPage + 1));
+$("#browse-category").addEventListener("click", () => {
+  $("#remote-form [name=pack]").value = "";
+  state.pack = null;
+  $("#selected-pack").hidden = true;
+  state.filters.remote = formValues($("#remote-form"));
+  loadItems();
+});
+$("#clear-pack").addEventListener("click", () => {
+  state.pack = null;
+  $("#remote-form [name=pack]").value = "";
+  $("#selected-pack").hidden = true;
+  $("#site-directory").open = true;
+  state.filters.remote = formValues($("#remote-form"));
+  resetRemoteGallery("请选择表情包", "从当前分类的表情包列表中选取，或浏览分类全部表情。");
+});
+$("#remote-form [name=pack]").addEventListener("input", () => { state.pack = null; $("#selected-pack").hidden = true; updateSelection(); });
+$("#cache-pack").addEventListener("click", () => {
+  if (state.pack) startJob({ mode: "pack", pack: state.pack.id, maximum: Math.min(100, Math.max(1, Number(state.pack.count) || 100)) });
+});
+$("#play-animations").addEventListener("change", (event) => {
+  state.playAnimations = event.target.checked;
+  for (const image of document.querySelectorAll(".image-area img")) {
+    const data = previewData.get(image);
+    if (data) applyAnimation(image, data);
+  }
+});
 for (const button of document.querySelectorAll("[data-tab]")) {
   button.addEventListener("click", () => changeTab(button.dataset.tab));
   button.addEventListener("keydown", (event) => { if (["ArrowLeft", "ArrowRight"].includes(event.key)) { event.preventDefault(); const other = state.tab === "local" ? "remote" : "local"; $(`#tab-${other}`).focus(); changeTab(other); } });
@@ -333,7 +482,7 @@ $("#edit-form").addEventListener("submit", async (event) => {
   } catch (error) { $("#edit-form .form-error").textContent = error.message; }
   finally { button.disabled = false; }
 });
-window.addEventListener("beforeunload", () => { clearTimeout(state.poll); ++state.generation; });
+window.addEventListener("beforeunload", () => { clearTimeout(state.poll); ++state.generation; visibility.disconnect(); });
 
 try {
   if (!bridge) throw new Error("请在 AstrBot 插件详情中打开“表情图库”管理视图。");

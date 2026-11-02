@@ -2,6 +2,7 @@
 
 import argparse
 import asyncio
+import base64
 import importlib.util
 import io
 import json
@@ -64,7 +65,7 @@ async def run(root: Path, live: bool):
     )
     event.is_at_or_wake_command = True
     try:
-        assert len(registered) == 9
+        assert len(registered) == 11
         assert all(
             route[0].startswith("/astrbot_plugin_wuwaemoji/admin/")
             for route in registered
@@ -77,7 +78,7 @@ async def run(root: Path, live: bool):
         assert [view.name for view in views] == ["admin"]
         assert metadata.i18n["zh-CN"]["views"]["admin"]["title"] == "表情图库"
         print(
-            "Actual AstrBot view discovery, localized title and nine registered admin APIs: OK"
+            "Actual AstrBot view discovery, localized title and eleven registered admin APIs: OK"
         )
         commands = {}
         for handler in star_handlers_registry.get_handlers_by_module_name(spec.name):
@@ -121,12 +122,49 @@ async def run(root: Path, live: bool):
             "Three actual AstrBot tool schemas, callable send handler and category context: OK (simulated transport)"
         )
         if live:
+            for kind in ("characters", "artists"):
+                directory = await plugin.request_api(
+                    "/" + kind, {"page": 1, "size": 100}
+                )
+                assert directory["items"] and all(
+                    "name" in item and "slug" in item for item in directory["items"]
+                )
+                print(
+                    f"Live {kind} directory: OK ({directory.get('total', len(directory['items']))} entries)"
+                )
+            packs = await plugin.request_api(
+                "/packs", {"character": "爱弥斯", "page": 1, "size": 1}
+            )
+            assert packs["items"] and packs["items"][0]["id"]
+            packed = await plugin.request_api(
+                "/emojis",
+                {"pack": packs["items"][0]["id"], "page": 1, "size": 1}
+                | plugin.media_params(),
+            )
+            assert packed["items"]
+            print("Live selected-category pack listing and pack image filter: OK")
             data = await plugin.request_api(
                 "/emojis",
                 {"character": "爱弥斯", "page": 1, "size": 2} | plugin.media_params(),
             )
             assert data["items"] and data["total"] > 0
             print(f"Live search: OK ({data['total']} matching images)")
+            animated = next(
+                (item for item in data["items"] if item.get("animated")), None
+            )
+            if animated:
+                original = await plugin.download_image(animated)
+                preview = plugin.admin.thumbnail(original)
+                assert (
+                    preview["animated"]
+                    and base64.b64decode(preview["data_url"].split(",", 1)[1])
+                    == original
+                )
+                with PILImage.open(io.BytesIO(original)) as image:
+                    assert image.n_frames > 1
+                    print(
+                        f"Live native animated preview: OK ({image.n_frames} frames, {image.format})"
+                    )
             event.message_str = "鸣潮搜图 爱弥斯"
             assert commands["鸣潮搜图"].filter(event, {})
             search = [x async for x in plugin.search_emoji(event)][0]

@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import io
 import json
 import time
@@ -12,6 +13,7 @@ from PIL import Image
 from starlette.requests import Request
 
 import main
+from admin_page import AdminPage
 from emoji_cache import CacheError
 
 
@@ -64,11 +66,11 @@ def test_registration_and_unauthenticated_access(plugin):
         context = SimpleNamespace(register_web_api=lambda *args: routes.append(args))
         routes = []
         plugin.admin.register(context)
-        assert len(routes) == 9
+        assert len(routes) == 11
         assert all(
             path.startswith("/astrbot_plugin_wuwaemoji/admin/") for path, *_ in routes
         )
-        for action in ("overview", "library", "preview", "jobs/status"):
+        for action in ("overview", "library", "preview", "jobs/status", "site/catalog"):
             code, _ = await call(plugin, action, owner=None)
             assert code == 401
         code, _ = await call(
@@ -79,6 +81,216 @@ def test_registration_and_unauthenticated_access(plugin):
         )
         assert code == 401
         assert not (plugin.cache.root / "index.json").exists()
+
+    asyncio.run(run())
+
+
+def test_site_catalog_is_live_paginated_cached_and_refreshable(plugin):
+    async def run():
+        plugin.request_api = AsyncMock(
+            return_value={
+                "items": [
+                    {
+                        "slug": "aimisi",
+                        "name": "爱弥斯",
+                        "count": 100,
+                        "packCount": 4,
+                        "url": "SIGNED-PRIVATE",
+                    }
+                ],
+                "page": 1,
+                "total": 130,
+                "hasNext": True,
+            }
+        )
+        code, result = await call(plugin, "site/catalog", query={"kind": "characters"})
+        assert (
+            code == 200
+            and result["items"][0]["name"] == "爱弥斯"
+            and result["has_next"]
+        )
+        assert result["items"][0]["pack_count"] == 4 and "SIGNED-PRIVATE" not in str(
+            result
+        )
+        await call(plugin, "site/catalog", query={"kind": "characters"})
+        assert plugin.request_api.await_count == 1
+        await call(plugin, "site/catalog", query={"kind": "characters", "refresh": "1"})
+        await call(
+            plugin, "site/catalog", query={"kind": "artists", "page": 2, "q": "雾"}
+        )
+        assert plugin.request_api.await_count == 3
+        assert plugin.request_api.call_args.args == (
+            "/artists",
+            {"q": "雾", "page": 2, "size": 100, "sort": "count", "order": "desc"},
+        )
+        code, _ = await call(
+            plugin, "site/catalog", query={"kind": "https://evil.test"}
+        )
+        assert code == 400 and plugin.request_api.await_count == 3
+
+    asyncio.run(run())
+
+
+def test_packs_follow_selected_categories_without_image_tickets(plugin):
+    async def run():
+        plugin.request_api = AsyncMock(
+            return_value={
+                "items": [
+                    {
+                        "id": "pack-id",
+                        "title": "问候表情包",
+                        "count": 8,
+                        "url": "SIGNED-PRIVATE",
+                        "characters": [{"name": "爱弥斯"}],
+                        "artists": [],
+                    }
+                ],
+                "total": 1,
+                "hasNext": False,
+            }
+        )
+        code, result = await call(
+            plugin,
+            "site/packs",
+            {
+                "filters": {"character": "爱弥斯", "artist": "雾雪", "pack": "ignored"},
+                "page": 2,
+            },
+        )
+        assert code == 200 and result["items"][0]["id"] == "pack-id"
+        assert "SIGNED-PRIVATE" not in str(result)
+        assert plugin.request_api.call_args.args == (
+            "/packs",
+            {
+                "character": "爱弥斯",
+                "artist": "雾雪",
+                "page": 2,
+                "size": 20,
+                "sort": "newest",
+            },
+        )
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize(
+    "format,mime", [("GIF", "image/gif"), ("WEBP", "image/webp"), ("PNG", "image/png")]
+)
+def test_animation_preview_keeps_frames_duration_and_original_bytes(
+    plugin, format, mime
+):
+    async def run():
+        content = io.BytesIO()
+        first, second = (
+            Image.new("RGBA", (20, 20), "red"),
+            Image.new("RGBA", (20, 20), "blue"),
+        )
+        first.save(
+            content,
+            format,
+            save_all=True,
+            append_images=[second],
+            duration=[100, 200],
+            loop=0,
+        )
+        original = content.getvalue()
+        saved = await plugin.cache.put(item(), original, "开心")
+        assert saved["animated"]
+        code, result = await call(plugin, "preview", query={"id": saved["id"]})
+        assert code == 200 and result["animated"]
+        assert result["data_url"].startswith(f"data:{mime};base64,")
+        data = base64.b64decode(result["data_url"].split(",", 1)[1])
+        assert data == original
+        with Image.open(io.BytesIO(data)) as decoded:
+            assert decoded.n_frames == 2
+        assert result["poster_url"].startswith("data:image/webp;base64,")
+        assert plugin.admin.preview_bytes > len(original)
+
+    asyncio.run(run())
+
+
+def test_pack_job_pages_follow_pack_size_instead_of_query_page_cap(plugin):
+    async def run():
+        plugin.request_api = AsyncMock(
+            return_value={"items": [item("a"), item("b")], "hasNext": True}
+        )
+        plugin.cache_image = AsyncMock(return_value="local-file")
+        body = {
+            "mode": "pack",
+            "pack": "pack-id",
+            "maximum": 12,
+            "category": "未分类",
+            "request_id": "pack-test",
+        }
+        code, job = await call(plugin, "jobs/start", body)
+        assert code == 200 and job["pages"] == 6
+        await plugin.admin.task
+        assert (
+            plugin.request_api.await_count == 6 and plugin.cache_image.await_count == 12
+        )
+        for invocation in plugin.request_api.call_args_list:
+            assert (
+                invocation.args[0] == "/emojis"
+                and invocation.args[1]["pack"] == "pack-id"
+            )
+        _, final = await call(plugin, "jobs/status", query={"id": job["id"]})
+        assert final["success"] == 12 and final["state"] == "completed"
+        code, _ = await call(
+            plugin, "jobs/start", body | {"request_id": "pack-invalid", "maximum": 101}
+        )
+        assert code == 400
+
+    asyncio.run(run())
+
+
+def test_large_animated_preview_reports_limit_without_flattening():
+    content = io.BytesIO()
+    Image.new("RGB", (8, 8), "red").save(
+        content,
+        "GIF",
+        save_all=True,
+        append_images=[Image.new("RGB", (8, 8), "blue")],
+        duration=100,
+        loop=0,
+    )
+    with pytest.raises(CacheError, match="8 MiB"):
+        AdminPage.thumbnail(content.getvalue() + bytes(8 * 1024 * 1024))
+
+
+def test_pack_pagination_keeps_page_size_fixed_on_partial_final_page(plugin):
+    async def run():
+        async def api(endpoint, params):
+            size = params["size"]
+            offset = (params["page"] - 1) * size
+            return {
+                "items": [item(str(index)) for index in range(offset, offset + size)],
+                "hasNext": True,
+            }
+
+        plugin.request_api = AsyncMock(side_effect=api)
+        plugin.cache_image = AsyncMock(return_value="local-file")
+        code, job = await call(
+            plugin,
+            "jobs/start",
+            {
+                "mode": "pack",
+                "pack": "one-pack",
+                "maximum": 5,
+                "request_id": "fixed-pages",
+            },
+        )
+        assert code == 200
+        await plugin.admin.task
+        assert [
+            entry.args[1]["size"] for entry in plugin.request_api.call_args_list
+        ] == [2, 2, 2]
+        assert [entry.args[0]["id"] for entry in plugin.cache_image.call_args_list] == [
+            "0",
+            "1",
+            "2",
+            "3",
+            "4",
+        ]
 
     asyncio.run(run())
 
